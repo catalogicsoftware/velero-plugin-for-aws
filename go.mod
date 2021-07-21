@@ -14,6 +14,7 @@ require (
 	github.com/vmware-tanzu/velero v1.6.1
 	k8s.io/api v0.19.12
 	k8s.io/apimachinery v0.19.12
+	k8s.io/client-go v0.19.7
 )
 
 replace github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
