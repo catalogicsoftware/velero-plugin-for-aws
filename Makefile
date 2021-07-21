@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# The binary to build (just the basename).
-BIN ?= velero-plugin-for-aws
+PKG := github.com/vmware-tanzu/velero-plugin-for-aws
+BIN := velero-plugin-for-aws
+
+REGISTRY 	?= catalogicsoftware
+VERSION 	?= v1.7.1.1
 
 # This repo's root import path (under GOPATH).
 PKG := github.com/vmware-tanzu/velero-plugin-for-aws
@@ -36,7 +39,9 @@ VELERO_DOCKERFILE ?= Dockerfile
 local : ARCH ?= $(shell go env GOOS)-$(shell go env GOARCH)
 ARCH ?= linux-amd64
 
-VERSION ?= main
+MULTIARCH_IMAGE = $(REGISTRY)/$(BIN)
+#IMAGE ?= $(REGISTRY)/$(BIN)-$(GOARCH)
+IMAGE ?= $(REGISTRY)/$(BIN)
 
 TAG_LATEST ?= false
 
