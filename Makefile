@@ -16,7 +16,7 @@ PKG := github.com/vmware-tanzu/velero-plugin-for-aws
 BIN := velero-plugin-for-aws
 
 REGISTRY 	?= catalogicsoftware
-VERSION 	?= v1.2.4
+VERSION 	?= v1.3.0-rc.1
 
 CONTAINER_PLATFORMS ?= amd64 arm arm64 # ppc64le
 
