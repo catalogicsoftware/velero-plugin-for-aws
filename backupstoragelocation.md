@@ -28,7 +28,7 @@ spec:
   config:
     # The AWS region where the bucket is located. Queried from the AWS S3 API if not provided.
     #
-    # Optional.
+    # Optional if s3ForcePathStyle is false.
     region: us-east-1
 
     # Whether to use path-style addressing instead of virtual hosted bucket addressing. Set to "true"
@@ -60,8 +60,18 @@ spec:
     # to enable encryption of the backups stored in S3. Only works with AWS S3 and may require explicitly 
     # granting key usage rights. 
     #
+    # Cannot be used in conjunction with customerKeyEncryptionFile.
+    #
     # Optional.
     kmsKeyId: "502b409c-4da1-419f-a16e-eif453b3i49f"
+    
+    # Specify the file that contains the SSE-C customer key to enable customer key encryption of the backups
+    # stored in S3. The referenced file should contain a 32-byte string.
+    #
+    # Cannot be used in conjunction with kmsKeyId.
+    #
+    # Optional (defaults to "", which means SSE-C is disabled).
+    customerKeyEncryptionFile: "/credentials/customer-key"
 
     # Version of the signature algorithm used to create signed URLs that are used by velero CLI to 
     # download backups or fetch logs. Possible versions are "1" and "4". Usually the default version 
@@ -81,4 +91,11 @@ spec:
     #
     # Optional (defaults to "false").
     insecureSkipTLSVerify: "true"
+
+    # Set this to "true" if you want to load the credentials file as a [shared config file](https://docs.aws.amazon.com/sdkref/latest/guide/file-format.html).
+    # This will have no effect if credentials are not specific for a BSL.
+    #
+    # Optional (defaults to "false").
+    enableSharedConfig: "true"
+
 ```

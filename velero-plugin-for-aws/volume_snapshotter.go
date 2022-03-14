@@ -36,7 +36,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-const regionKey = "region"
+const (
+	regionKey = "region"
+	ebsCSIDriver = "ebs.csi.aws.com"
+)
 
 // iopsVolumeTypes is a set of AWS EBS volume types for which IOPS should
 // be captured during snapshot and provided when creating a new volume
@@ -67,19 +70,25 @@ func newVolumeSnapshotter(logger logrus.FieldLogger) *VolumeSnapshotter {
 }
 
 func (b *VolumeSnapshotter) Init(config map[string]string) error {
-	if err := veleroplugin.ValidateVolumeSnapshotterConfigKeys(config, regionKey, credentialProfileKey); err != nil {
+	if err := veleroplugin.ValidateVolumeSnapshotterConfigKeys(config, regionKey, credentialProfileKey, credentialsFileKey, enableSharedConfigKey); err != nil {
 		return err
 	}
 
 	region := config[regionKey]
 	credentialProfile := config[credentialProfileKey]
+	credentialsFile := config[credentialsFileKey]
+	enableSharedConfig := config[enableSharedConfigKey]
+
 	if region == "" {
 		return errors.Errorf("missing %s in aws configuration", regionKey)
 	}
 
 	awsConfig := aws.NewConfig().WithRegion(region)
+	sessionOptions, err := newSessionOptions(*awsConfig, credentialProfile, "", credentialsFile, enableSharedConfig)
+	if err != nil {
+		return err
+	}
 
-	sessionOptions := session.Options{Config: *awsConfig, Profile: credentialProfile}
 	sess, err := getSession(sessionOptions)
 	if err != nil {
 		return err
@@ -96,9 +105,10 @@ func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, vol
 	snapReq := &ec2.DescribeSnapshotsInput{
 		SnapshotIds: []*string{&snapshotID},
 	}
-
 	snapRes, err := b.ec2.DescribeSnapshots(snapReq)
 	if err != nil {
+		b.log.Infof("failed to describe snap shot: %v", err)
+
 		return "", errors.WithStack(err)
 	}
 
@@ -354,16 +364,22 @@ func (b *VolumeSnapshotter) GetVolumeID(unstructuredPV runtime.Unstructured) (st
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredPV.UnstructuredContent(), pv); err != nil {
 		return "", errors.WithStack(err)
 	}
-
-	if pv.Spec.AWSElasticBlockStore == nil {
-		return "", nil
+	if pv.Spec.CSI != nil {
+		driver := pv.Spec.CSI.Driver
+		if driver == ebsCSIDriver {
+			return ebsVolumeIDRegex.FindString(pv.Spec.CSI.VolumeHandle), nil
+		}
+		b.log.Infof("Unable to handle CSI driver: %s", driver)
 	}
 
-	if pv.Spec.AWSElasticBlockStore.VolumeID == "" {
-		return "", errors.New("spec.awsElasticBlockStore.volumeID not found")
+	if pv.Spec.AWSElasticBlockStore != nil {
+		if pv.Spec.AWSElasticBlockStore.VolumeID == "" {
+			return "", errors.New("spec.awsElasticBlockStore.volumeID not found")
+		}
+		return ebsVolumeIDRegex.FindString(pv.Spec.AWSElasticBlockStore.VolumeID), nil
 	}
 
-	return ebsVolumeIDRegex.FindString(pv.Spec.AWSElasticBlockStore.VolumeID), nil
+	return "", nil
 }
 
 func (b *VolumeSnapshotter) SetVolumeID(unstructuredPV runtime.Unstructured, volumeID string) (runtime.Unstructured, error) {
@@ -371,17 +387,24 @@ func (b *VolumeSnapshotter) SetVolumeID(unstructuredPV runtime.Unstructured, vol
 	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredPV.UnstructuredContent(), pv); err != nil {
 		return nil, errors.WithStack(err)
 	}
-
-	if pv.Spec.AWSElasticBlockStore == nil {
-		return nil, errors.New("spec.awsElasticBlockStore not found")
-	}
-
-	pvFailureDomainZone := pv.Labels["failure-domain.beta.kubernetes.io/zone"]
-
-	if len(pvFailureDomainZone) > 0 {
-		pv.Spec.AWSElasticBlockStore.VolumeID = fmt.Sprintf("aws://%s/%s", pvFailureDomainZone, volumeID)
+	if pv.Spec.CSI != nil {
+		// PV is provisioned by CSI driver
+		driver := pv.Spec.CSI.Driver
+		if driver == ebsCSIDriver {
+			pv.Spec.CSI.VolumeHandle = volumeID
+		} else {
+			return nil, fmt.Errorf("unable to handle CSI driver: %s", driver)
+		}
+	} else if pv.Spec.AWSElasticBlockStore != nil {
+		// PV is provisioned by in-tree driver
+		pvFailureDomainZone := pv.Labels["failure-domain.beta.kubernetes.io/zone"]
+		if len(pvFailureDomainZone) > 0 {
+			pv.Spec.AWSElasticBlockStore.VolumeID = fmt.Sprintf("aws://%s/%s", pvFailureDomainZone, volumeID)
+		} else {
+			pv.Spec.AWSElasticBlockStore.VolumeID = volumeID
+		}
 	} else {
-		pv.Spec.AWSElasticBlockStore.VolumeID = volumeID
+		return nil, errors.New("spec.csi and spec.awsElasticBlockStore not found")
 	}
 
 	res, err := runtime.DefaultUnstructuredConverter.ToUnstructured(pv)

@@ -41,17 +41,19 @@ import (
 )
 
 const (
-	s3URLKey                 = "s3Url"
-	publicURLKey             = "publicUrl"
-	kmsKeyIDKey              = "kmsKeyId"
-	s3ForcePathStyleKey      = "s3ForcePathStyle"
-	bucketKey                = "bucket"
-	signatureVersionKey      = "signatureVersion"
-	credentialsFileKey       = "credentialsFile"
-	credentialProfileKey     = "profile"
-	serverSideEncryptionKey  = "serverSideEncryption"
-	insecureSkipTLSVerifyKey = "insecureSkipTLSVerify"
-	caCertKey                = "caCert"
+	s3URLKey                     = "s3Url"
+	publicURLKey                 = "publicUrl"
+	kmsKeyIDKey                  = "kmsKeyId"
+	customerKeyEncryptionFileKey = "customerKeyEncryptionFile"
+	s3ForcePathStyleKey          = "s3ForcePathStyle"
+	bucketKey                    = "bucket"
+	signatureVersionKey          = "signatureVersion"
+	credentialsFileKey           = "credentialsFile"
+	credentialProfileKey         = "profile"
+	serverSideEncryptionKey      = "serverSideEncryption"
+	insecureSkipTLSVerifyKey     = "insecureSkipTLSVerify"
+	caCertKey                    = "caCert"
+	enableSharedConfigKey        = "enableSharedConfig"
 )
 
 type s3Interface interface {
@@ -68,6 +70,7 @@ type ObjectStore struct {
 	preSignS3            s3Interface
 	s3Uploader           *s3manager.Uploader
 	kmsKeyID             string
+	sseCustomerKey       string
 	signatureVersion     string
 	serverSideEncryption string
 }
@@ -90,27 +93,31 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		s3URLKey,
 		publicURLKey,
 		kmsKeyIDKey,
+		customerKeyEncryptionFileKey,
 		s3ForcePathStyleKey,
 		signatureVersionKey,
 		credentialsFileKey,
 		credentialProfileKey,
 		serverSideEncryptionKey,
 		insecureSkipTLSVerifyKey,
+		enableSharedConfigKey,
 	); err != nil {
 		return err
 	}
 
 	var (
-		region                   = config[regionKey]
-		s3URL                    = config[s3URLKey]
-		publicURL                = config[publicURLKey]
-		kmsKeyID                 = config[kmsKeyIDKey]
-		s3ForcePathStyleVal      = config[s3ForcePathStyleKey]
-		signatureVersion         = config[signatureVersionKey]
-		credentialProfile        = config[credentialProfileKey]
-		credentialsFile          = config[credentialsFileKey]
-		serverSideEncryption     = config[serverSideEncryptionKey]
-		insecureSkipTLSVerifyVal = config[insecureSkipTLSVerifyKey]
+		region                    = config[regionKey]
+		s3URL                     = config[s3URLKey]
+		publicURL                 = config[publicURLKey]
+		kmsKeyID                  = config[kmsKeyIDKey]
+		customerKeyEncryptionFile = config[customerKeyEncryptionFileKey]
+		s3ForcePathStyleVal       = config[s3ForcePathStyleKey]
+		signatureVersion          = config[signatureVersionKey]
+		credentialProfile         = config[credentialProfileKey]
+		credentialsFile           = config[credentialsFileKey]
+		serverSideEncryption      = config[serverSideEncryptionKey]
+		insecureSkipTLSVerifyVal  = config[insecureSkipTLSVerifyKey]
+		enableSharedConfig        = config[enableSharedConfigKey]
 
 		// note that bucket is automatically added to the config map
 		// by the server from the ObjectStorageProviderConfig so
@@ -170,7 +177,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		}
 	}
 
-	sessionOptions, err := newSessionOptions(*serverConfig, credentialProfile, caCert, credentialsFile)
+	sessionOptions, err := newSessionOptions(*serverConfig, credentialProfile, caCert, credentialsFile, enableSharedConfig)
 	if err != nil {
 		return err
 	}
@@ -185,6 +192,18 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	o.kmsKeyID = kmsKeyID
 	o.serverSideEncryption = serverSideEncryption
 
+	if customerKeyEncryptionFile != "" && kmsKeyID != "" {
+		return errors.Wrapf(err, "you cannot use %s and %s at the same time", kmsKeyIDKey, customerKeyEncryptionFileKey)
+	}
+
+	if customerKeyEncryptionFile != "" {
+		customerKey, err := readCustomerKey(customerKeyEncryptionFile)
+		if err != nil {
+			return err
+		}
+		o.sseCustomerKey = customerKey
+	}
+
 	if signatureVersion != "" {
 		if !isValidSignatureVersion(signatureVersion) {
 			return errors.Errorf("invalid signature version: %s", signatureVersion)
@@ -198,7 +217,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 			return err
 		}
 
-		publicSessionOptions, err := newSessionOptions(*publicConfig, credentialProfile, caCert, credentialsFile)
+		publicSessionOptions, err := newSessionOptions(*publicConfig, credentialProfile, caCert, credentialsFile, enableSharedConfig)
 		if err != nil {
 			return err
 		}
@@ -215,10 +234,38 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	return nil
 }
 
+func readCustomerKey(customerKeyEncryptionFile string) (string, error) {
+	if _, err := os.Stat(customerKeyEncryptionFile); err != nil {
+		if os.IsNotExist(err) {
+			return "", errors.Wrapf(err, "provided %s does not exist: %s", customerKeyEncryptionFileKey, customerKeyEncryptionFile)
+		}
+		return "", errors.Wrapf(err, "could not stat %s: %s", customerKeyEncryptionFileKey, customerKeyEncryptionFile)
+	}
+
+	fileHandle, err := os.Open(customerKeyEncryptionFile)
+	if err != nil {
+		return "", errors.Wrapf(err, "could not read %s: %s", customerKeyEncryptionFileKey, customerKeyEncryptionFile)
+	}
+
+	keyBytes := make([]byte, 32)
+	nBytes, err := fileHandle.Read(keyBytes)
+	if err != nil {
+		return "", errors.Wrapf(err, "could not read %s: %s", customerKeyEncryptionFileKey, customerKeyEncryptionFile)
+	}
+	fileHandle.Close()
+
+	if nBytes != 32 {
+		return "", errors.Wrapf(err, "contents of %s (%s) are not exactly 32 bytes", customerKeyEncryptionFileKey, customerKeyEncryptionFile)
+	}
+
+	key := string(keyBytes)
+	return key, nil
+}
+
 // newSessionOptions creates a session.Options with the given config and profile. If
 // caCert and credentialsFile are provided, these will be used for the CustomCABundle
 // and the credentials for the session.
-func newSessionOptions(config aws.Config, profile string, caCert string, credentialsFile string) (session.Options, error) {
+func newSessionOptions(config aws.Config, profile string, caCert string, credentialsFile string, enableSharedConfig string) (session.Options, error) {
 	sessionOptions := session.Options{Config: config, Profile: profile}
 
 	if caCert != "" {
@@ -233,6 +280,10 @@ func newSessionOptions(config aws.Config, profile string, caCert string, credent
 			return session.Options{}, errors.Wrapf(err, "could not get credentialsFile info")
 		}
 		sessionOptions.SharedConfigFiles = []string{credentialsFile}
+
+		if sharedConfig, berr := strconv.ParseBool(enableSharedConfig); sharedConfig && berr == nil {
+			sessionOptions.SharedConfigState = session.SharedConfigEnable
+		}
 	}
 
 	return sessionOptions, nil
@@ -277,6 +328,10 @@ func (o *ObjectStore) PutObject(bucket, key string, body io.Reader) error {
 	case o.kmsKeyID != "":
 		req.ServerSideEncryption = aws.String("aws:kms")
 		req.SSEKMSKeyId = &o.kmsKeyID
+	// if sseCustomerKey is not empty, assume SSE-C encryption with AES256 algorithm
+	case o.sseCustomerKey != "":
+		req.SSECustomerAlgorithm = aws.String("AES256")
+		req.SSECustomerKey = &o.sseCustomerKey
 	// otherwise, use the SSE algorithm specified, if any
 	case o.serverSideEncryption != "":
 		req.ServerSideEncryption = aws.String(o.serverSideEncryption)
@@ -301,6 +356,11 @@ func (o *ObjectStore) ObjectExists(bucket, key string) (bool, error) {
 	req := &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
+	}
+
+	if o.sseCustomerKey != "" {
+		req.SSECustomerAlgorithm = aws.String("AES256")
+		req.SSECustomerKey = &o.sseCustomerKey
 	}
 
 	log.Debug("Checking if object exists")
@@ -333,6 +393,11 @@ func (o *ObjectStore) GetObject(bucket, key string) (io.ReadCloser, error) {
 	req := &s3.GetObjectInput{
 		Bucket: &bucket,
 		Key:    &key,
+	}
+
+	if o.sseCustomerKey != "" {
+		req.SSECustomerAlgorithm = aws.String("AES256")
+		req.SSECustomerKey = &o.sseCustomerKey
 	}
 
 	res, err := o.s3.GetObject(req)
