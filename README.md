@@ -9,6 +9,7 @@ This repository contains these plugins to support running Velero on AWS:
 - An object store plugin for persisting and retrieving backups on AWS S3. Content of backup is log files, warning/error files, restore logs.
 
 - A volume snapshotter plugin for creating snapshots from volumes (during a backup) and volumes from snapshots (during a restore) on AWS EBS.
+  - Since v1.4.0 the snapshotter plugin can handle the volumes provisioned by CSI driver `ebs.csi.aws.com`
 
 
 ## Compatibility
@@ -17,6 +18,7 @@ Below is a listing of plugin versions and respective Velero versions that are co
 
 | Plugin Version  | Velero Version |
 |-----------------|----------------|
+| v1.4.x          | v1.8.x         |
 | v1.3.x          | v1.7.x         |
 | v1.2.x          | v1.6.x         |
 | v1.1.x          | v1.5.x         |
@@ -262,7 +264,7 @@ Install Velero, including all prerequisites, into the cluster and start the depl
 ```bash
 velero install \
     --provider aws \
-    --plugins velero/velero-plugin-for-aws:v1.3.0 \
+    --plugins velero/velero-plugin-for-aws:v1.4.0 \
     --bucket $BUCKET \
     --backup-location-config region=$REGION \
     --snapshot-location-config region=$REGION \
@@ -274,7 +276,7 @@ velero install \
 ```bash
 velero install \
     --provider aws \
-    --plugins velero/velero-plugin-for-aws:v1.3.0 \
+    --plugins velero/velero-plugin-for-aws:v1.4.0 \
     --bucket $BUCKET \
     --backup-location-config region=$REGION \
     --snapshot-location-config region=$REGION \
@@ -283,6 +285,13 @@ velero install \
 ```
 
 Additionally, you can specify `--use-restic` to enable restic support, and `--wait` to wait for the deployment to be ready.
+
+**Note:** If you are using EKS, there is a [known permissions issue](https://github.com/vmware-tanzu/velero/issues/3138) when using Velero with Kubernetes versions 1.18 and earlier that will prevent the Velero from being able to read S3 storage locations. To fix this, update the Velero deployment yaml file to include following `securityContext` value:
+
+```
+securityContext:
+        fsGroup: 65534
+```
 
 (Optional) Specify [additional configurable parameters][7] for the `--backup-location-config` flag.
 
@@ -388,5 +397,3 @@ Copy one of the returned IDs `<ID>` and use it with the `aws` CLI tool to search
 [101]: https://github.com/vmware-tanzu/velero-plugin-for-aws/workflows/Main%20CI/badge.svg
 [102]: https://github.com/vmware-tanzu/velero-plugin-for-aws/actions?query=workflow%3A"Main+CI"
 [103]: https://github.com/vmware-tanzu/velero/issues/new/choose
-
-
