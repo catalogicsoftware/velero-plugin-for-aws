@@ -19,7 +19,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -v -o /go/bin/velero-plugin-for-aws ./vele
 
 FROM busybox:1.33.1 AS busybox
 
-FROM gcr.io/distroless/base-debian10:nonroot
+FROM gcr.io/distroless/base-debian11:nonroot
 COPY --from=build /go/bin/velero-plugin-for-aws /plugins/
 COPY --from=busybox /bin/cp /bin/cp
 USER nonroot:nonroot
