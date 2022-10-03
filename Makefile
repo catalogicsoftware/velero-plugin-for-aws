@@ -19,7 +19,7 @@ BIN ?= velero-plugin-for-aws
 PKG := github.com/vmware-tanzu/velero-plugin-for-aws
 
 REGISTRY 	?= catalogicsoftware
-VERSION 	?= v1.5.0.1
+VERSION 	?= v1.5.1.1
 
 # Image name
 IMAGE ?= $(REGISTRY)/$(BIN)
