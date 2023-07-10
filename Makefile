@@ -104,6 +104,16 @@ test:
 # ci is a convenience target for CI builds.
 ci: verify-modules test
 
+# container builds a multiarch Docker image containing the binary
+
+docker-build:
+	docker buildx create --name multiarch
+	docker buildx use multiarch
+	docker buildx build -t $(IMAGE):$(VERSION) --platform=linux/arm64,linux/amd64 -f Dockerfile-common . --push
+
+
+# container builds a Docker image containing the binary.
+.PHONY: container
 container:
 ifneq ($(BUILDX_ENABLED), true)
 	$(error $(BUILDX_ERROR))
