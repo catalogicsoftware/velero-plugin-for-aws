@@ -78,7 +78,6 @@ test:
 ci: verify-modules test
 
 # container builds a multiarch Docker image containing the binary
-.PHONY: docker-build
 docker-build:
 	docker buildx create --name multiarch
 	docker buildx use multiarch
