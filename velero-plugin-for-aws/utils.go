@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
 	"github.com/pkg/errors"
 	corev1api "k8s.io/api/core/v1"
 	kerror "k8s.io/apimachinery/pkg/api/errors"
@@ -44,7 +45,7 @@ const (
 // UpdateSnapshotProgress updates the configmap in order to relay the
 // snapshot progress to KubeAgent
 func (vs *VolumeSnapshotter) UpdateSnapshotProgress(
-	volumeInfo *ec2.Volume,
+	volumeInfo types.Volume,
 	snapshotID string,
 	tags map[string]string,
 	percentageCompleteString string,

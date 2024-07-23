@@ -19,13 +19,16 @@ package main
 import (
 	"context"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/smithy-go"
 	"os"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/smithy-go"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -48,7 +51,7 @@ var iopsVolumeTypes = sets.NewString("io1", "io2")
 
 type VolumeSnapshotter struct {
 	log    logrus.FieldLogger
-	ec2    *ec2.EC2
+	ec2    *ec2.Client
 	config map[string]string
 }
 
@@ -89,13 +92,7 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 		return errors.WithStack(err)
 	}
 
-	sess, err := getSession(sessionOptions)
-	if err != nil {
-		return err
-	}
-
-	b.ec2 = ec2.New(sess)
-	b.config = config
+	b.ec2 = ec2.NewFromConfig(cfg)
 
 	return nil
 }
@@ -221,8 +218,8 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		}
 
 		// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSnapshots.html
-		snapRes, err := b.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
-			SnapshotIds: []*string{res.SnapshotId},
+		snapRes, err := b.ec2.DescribeSnapshots(context.TODO(), &ec2.DescribeSnapshotsInput{
+			SnapshotIds: []string{aws.ToString(res.SnapshotId)},
 		})
 		if err != nil {
 			return "", errors.WithStack(err)
@@ -235,8 +232,8 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		var snapshotState string
 		var snapshotStateMessage string
 		var snapshotProgressPercentage string
-		if snapRes != nil && snapRes.Snapshots[0].State != nil {
-			snapshotState = *snapRes.Snapshots[0].State
+		if snapRes != nil && snapRes.Snapshots[0].State != "" {
+			snapshotState = string(snapRes.Snapshots[0].State)
 		}
 		if snapRes != nil && snapRes.Snapshots[0].StateMessage != nil {
 			snapshotStateMessage = *snapRes.Snapshots[0].StateMessage
