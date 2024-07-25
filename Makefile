@@ -16,7 +16,7 @@ PKG := github.com/vmware-tanzu/velero-plugin-for-aws
 BIN := velero-plugin-for-aws
 
 REGISTRY 	?= catalogicsoftware
-VERSION 	?= v1.7.1.1
+VERSION 	?= v1.10
 
 # This repo's root import path (under GOPATH).
 PKG := github.com/vmware-tanzu/velero-plugin-for-aws
