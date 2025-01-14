@@ -248,7 +248,7 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		}
 
 		if !deleteSnapshotProgressConfigMap {
-			defer b.DeleteSnapshotProgressConfigMap()
+			defer b.DeleteSnapshotProgressConfigMap(tags)
 			deleteSnapshotProgressConfigMap = true
 		}
 
