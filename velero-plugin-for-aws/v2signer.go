@@ -7,14 +7,11 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
-	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
@@ -156,27 +153,6 @@ func (s *SignatureV2Signer) canonicalizeResource(req *http.Request) string {
 	}
 
 	return path
-}
-
-// CustomEndpointResolverV2 implements EndpointResolverV2 for custom endpoints
-type CustomEndpointResolverV2 struct {
-	URL string
-}
-
-func (r *CustomEndpointResolverV2) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) (smithyendpoints.Endpoint, error) {
-	u, err := url.Parse(r.URL)
-	if err != nil {
-		return smithyendpoints.Endpoint{}, fmt.Errorf("failed to parse endpoint URL: %w", err)
-	}
-
-	// For path-style addressing, prepend the bucket to the path
-	if params.Bucket != nil {
-		u.Path = "/" + *params.Bucket + u.Path
-	}
-
-	return smithyendpoints.Endpoint{
-		URI: *u,
-	}, nil
 }
 
 // SigningMiddleware creates a middleware that signs requests with Signature V2
