@@ -7,11 +7,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	smithyendpoints "github.com/aws/smithy-go/endpoints"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 )
@@ -85,9 +88,15 @@ func (s *SignatureV2Signer) canonicalizeAmzHeaders(headers http.Header) string {
 	var amzHeaders []string
 	headerMap := make(map[string][]string)
 
+	// Headers to exclude for Google Cloud Storage compatibility
+	excludeHeaders := map[string]bool{
+		"x-amz-decoded-content-length": true,
+		"x-amz-trailer":                true,
+	}
+
 	for key, values := range headers {
 		lowerKey := strings.ToLower(key)
-		if strings.HasPrefix(lowerKey, "x-amz-") {
+		if strings.HasPrefix(lowerKey, "x-amz-") && !excludeHeaders[lowerKey] {
 			amzHeaders = append(amzHeaders, lowerKey)
 			headerMap[lowerKey] = values
 		}
@@ -149,15 +158,36 @@ func (s *SignatureV2Signer) canonicalizeResource(req *http.Request) string {
 	return path
 }
 
+// CustomEndpointResolverV2 implements EndpointResolverV2 for custom endpoints
+type CustomEndpointResolverV2 struct {
+	URL string
+}
+
+func (r *CustomEndpointResolverV2) ResolveEndpoint(ctx context.Context, params s3.EndpointParameters) (smithyendpoints.Endpoint, error) {
+	u, err := url.Parse(r.URL)
+	if err != nil {
+		return smithyendpoints.Endpoint{}, fmt.Errorf("failed to parse endpoint URL: %w", err)
+	}
+
+	// For path-style addressing, prepend the bucket to the path
+	if params.Bucket != nil {
+		u.Path = "/" + *params.Bucket + u.Path
+	}
+
+	return smithyendpoints.Endpoint{
+		URI: *u,
+	}, nil
+}
+
 // SigningMiddleware creates a middleware that signs requests with Signature V2
 // This is necessary because AWS SDK v2 doesn't support Signature V2 natively
 func SigningMiddleware(signer *SignatureV2Signer, credsProvider aws.CredentialsProvider) func(*middleware.Stack) error {
 	return func(stack *middleware.Stack) error {
-		// CRITICAL: Clear the Finalize stack to remove AWS SDK v2's default SigV4 signing middleware
-		// Without this, the SDK will try to apply SigV4 signing which conflicts with our SigV2 signing
-		stack.Finalize.Clear()
+		// Remove only the AWS SigV4 signing middleware by ID
+		// This is more surgical than clearing the entire stack
+		stack.Finalize.Remove("Signing")
 
-		// Add our custom Signature V2 signing middleware
+		// Add our custom Signature V2 signing middleware at the end of Finalize
 		return stack.Finalize.Add(
 			middleware.FinalizeMiddlewareFunc(
 				"SignatureV2SigningMiddleware",
@@ -174,11 +204,13 @@ func SigningMiddleware(signer *SignatureV2Signer, credsProvider aws.CredentialsP
 						return middleware.FinalizeOutput{}, middleware.Metadata{}, fmt.Errorf("failed to retrieve credentials: %w", err)
 					}
 
-					// Remove any SigV4 headers that might have been added
+					// Remove any SigV4 and AWS-specific headers that might have been added
 					req.Header.Del("Authorization")
 					req.Header.Del("X-Amz-Date")
 					req.Header.Del("X-Amz-Security-Token")
 					req.Header.Del("X-Amz-Content-Sha256")
+					req.Header.Del("X-Amz-Decoded-Content-Length")
+					req.Header.Del("X-Amz-Trailer")
 
 					// Sign the request with Signature V2 using the retrieved credentials
 					if err := signer.SignHTTP(req.Request, creds.AccessKeyID, creds.SecretAccessKey); err != nil {
