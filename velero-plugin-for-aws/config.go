@@ -98,6 +98,9 @@ func newS3Client(cfg aws.Config, url string, forcePathStyle bool) (*s3.Client, e
 		},
 	}
 	if strings.Contains(url, ".googleapis.com") {
+		if !IsValidS3URLScheme(url) {
+			return nil, errors.Errorf("Invalid s3 url %s, URL must be valid according to https://golang.org/pkg/net/url/#Parse and start with http:// or https://", url)
+		}
 		sigV2Signer := &SignatureV2Signer{}
 		opts = append(opts, func(o *s3.Options) {
 			o.EndpointResolver = s3.EndpointResolverFromURL(url)
