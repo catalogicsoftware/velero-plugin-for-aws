@@ -110,6 +110,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		kmsKeyID                  = config[kmsKeyIDKey]
 		customerKeyEncryptionFile = config[customerKeyEncryptionFileKey]
 		s3ForcePathStyleVal       = config[s3ForcePathStyleKey]
+		signatureVersionVal       = config[signatureVersionKey]
 		credentialProfile         = config[credentialProfileKey]
 		credentialsFile           = config[credentialsFileKey]
 		serverSideEncryption      = config[serverSideEncryptionKey]
@@ -122,6 +123,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		bucket                = config[bucketKey]
 		caCert                = config[caCertKey]
 		s3ForcePathStyle      bool
+		signatureVersion      string
 		insecureSkipTLSVerify bool
 		err                   error
 	)
@@ -130,6 +132,12 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		if s3ForcePathStyle, err = strconv.ParseBool(s3ForcePathStyleVal); err != nil {
 			return errors.Wrapf(err, "could not parse %s (expected bool)", s3ForcePathStyleKey)
 		}
+	}
+
+	if signatureVersionVal == "" {
+		signatureVersion = "v4"
+	} else {
+		signatureVersion = signatureVersionVal
 	}
 
 	if insecureSkipTLSVerifyVal != "" {
@@ -145,7 +153,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		if err != nil {
 			return errors.WithStack(err)
 		}
-		client, err := newS3Client(cfg, s3URL, s3ForcePathStyle)
+		client, err := newS3Client(cfg, s3URL, s3ForcePathStyle, signatureVersion)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -167,7 +175,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		return errors.WithStack(err)
 	}
 
-	client, err := newS3Client(cfg, s3URL, s3ForcePathStyle)
+	client, err := newS3Client(cfg, s3URL, s3ForcePathStyle, signatureVersion)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -190,7 +198,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	}
 
 	if publicURL != "" {
-		publicClient, err := newS3Client(cfg, publicURL, s3ForcePathStyle)
+		publicClient, err := newS3Client(cfg, publicURL, s3ForcePathStyle, signatureVersion)
 		if err != nil {
 			return err
 		}

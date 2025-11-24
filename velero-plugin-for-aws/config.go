@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
@@ -91,13 +90,13 @@ func (cb *configBuilder) Build() (aws.Config, error) {
 	return conf, nil
 }
 
-func newS3Client(cfg aws.Config, url string, forcePathStyle bool) (*s3.Client, error) {
+func newS3Client(cfg aws.Config, url string, forcePathStyle bool, signatureVersion string) (*s3.Client, error) {
 	opts := []func(*s3.Options){
 		func(o *s3.Options) {
 			o.UsePathStyle = forcePathStyle
 		},
 	}
-	if strings.Contains(url, ".googleapis.com") {
+	if signatureVersion == "v2" {
 		if !IsValidS3URLScheme(url) {
 			return nil, errors.Errorf("Invalid s3 url %s, URL must be valid according to https://golang.org/pkg/net/url/#Parse and start with http:// or https://", url)
 		}
