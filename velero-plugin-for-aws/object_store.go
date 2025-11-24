@@ -134,10 +134,10 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		}
 	}
 
-	if signatureVersion == "" {
+	if signatureVersionVal == "" {
 		signatureVersion = "v4"
 	} else {
-		signatureVersion = "v" + signatureVersionVal
+		signatureVersion = signatureVersionVal
 	}
 
 	if insecureSkipTLSVerifyVal != "" {
