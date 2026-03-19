@@ -109,16 +109,7 @@ ci: verify-modules test
 docker-build:
 	docker buildx create --name multiarch
 	docker buildx use multiarch
-	docker buildx build -t $(IMAGE):$(VERSION) \
-	--platform=linux/arm64,linux/amd64,linux/arm/v7 \
-	--build-arg=GOPROXY=$(GOPROXY) \
-	--build-arg=PKG=$(PKG) \
-	--build-arg=BIN=$(BIN) \
-	--build-arg=VERSION=$(VERSION) \
-	--build-arg=GIT_SHA=$(GIT_SHA) \
-	--build-arg=GIT_TREE_STATE=$(GIT_TREE_STATE) \
-	--build-arg=REGISTRY=$(REGISTRY) \
-	-f Dockerfile . --push
+	docker buildx build -t $(IMAGE):$(VERSION) --platform=linux/arm64,linux/amd64 -f Dockerfile-common . --push
 
 
 # container builds a Docker image containing the binary.
