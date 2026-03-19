@@ -49,10 +49,13 @@ const (
 // from snapshot.
 var iopsVolumeTypes = sets.NewString("io1", "io2")
 
+const credentialRefreshInterval = 10 * time.Minute
+
 type VolumeSnapshotter struct {
-	log    logrus.FieldLogger
-	ec2    *ec2.Client
-	config map[string]string
+	log             logrus.FieldLogger
+	ec2             *ec2.Client
+	config          map[string]string
+	lastRefreshTime time.Time
 }
 
 // takes AWS session options to create a new session
@@ -93,11 +96,25 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 	}
 
 	b.ec2 = ec2.NewFromConfig(cfg)
+	b.config = config
+	b.lastRefreshTime = time.Now()
 
 	return nil
 }
 
+func (b *VolumeSnapshotter) refreshCredentials() error {
+	if time.Since(b.lastRefreshTime) >= credentialRefreshInterval {
+		b.log.Infof("Refreshing AWS credentials since the last refresh was %v ago", time.Since(b.lastRefreshTime))
+		return b.Init(b.config)
+	}
+	return nil
+}
+
 func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, volumeAZ string, iops *int64) (volumeID string, err error) {
+	if err := b.refreshCredentials(); err != nil {
+		return "", errors.WithStack(err)
+	}
+
 	// describe the snapshot so we can apply its tags to the volume
 	descSnapInput := &ec2.DescribeSnapshotsInput{
 		SnapshotIds: []string{snapshotID},
@@ -163,6 +180,10 @@ func (b *VolumeSnapshotter) GetVolumeInfo(volumeID, volumeAZ string) (string, *i
 }
 
 func (b *VolumeSnapshotter) describeVolume(volumeID string) (types.Volume, error) {
+	if err := b.refreshCredentials(); err != nil {
+		return types.Volume{}, errors.WithStack(err)
+	}
+
 	input := &ec2.DescribeVolumesInput{
 		VolumeIds: []string{volumeID},
 	}
@@ -183,6 +204,10 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 	volumeInfo, err := b.describeVolume(volumeID)
 	if err != nil {
 		return "", err
+	}
+
+	if err := b.refreshCredentials(); err != nil {
+		return "", errors.WithStack(err)
 	}
 
 	res, err := b.ec2.CreateSnapshot(context.Background(), &ec2.CreateSnapshotInput{
@@ -209,12 +234,8 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 	var deleteSnapshotProgressConfigMap bool
 
 	for {
-		if t != 0 && t%600 == 0 {
-			b.log.Info("refreshing credentials ", "elapsedTime", t)
-			err := b.Init(b.config)
-			if err != nil {
-				return "", errors.WithStack(err)
-			}
+		if err := b.refreshCredentials(); err != nil {
+			return "", errors.WithStack(err)
 		}
 
 		// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSnapshots.html
@@ -335,6 +356,10 @@ func ec2Tag(key, val string) types.Tag {
 }
 
 func (b *VolumeSnapshotter) DeleteSnapshot(snapshotID string) error {
+	if err := b.refreshCredentials(); err != nil {
+		return errors.WithStack(err)
+	}
+
 	input := &ec2.DeleteSnapshotInput{
 		SnapshotId: &snapshotID,
 	}
