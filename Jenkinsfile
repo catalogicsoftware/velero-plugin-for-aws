@@ -37,7 +37,7 @@ node("cloudcasa-build") {
     def dockerRegistryInternal = env.DOCKER_REGISTRY_INTERNAL
     def dockerRegistryCredsInternal = env.DOCKER_REGISTRY_CREDENTIALS_INTERNAL
     def dockerPrefixInternal = "${dockerRegistryInternal}/catalogicsoftware"
-    def builderImage = env.BUILDER_IMAGE ?: "cc-nexus.ad.catalogic.us:8085/builder:latest"
+    def goBuilderImage = env.GO_BUILDER_IMAGE ?: (env.BUILDER_IMAGE ?: "golang:1.26.0-bookworm")
     def imageName = "velero-plugin-for-aws"
     def imageRef = "${dockerPrefixInternal}/${imageName}:${imageTag}"
 
@@ -57,7 +57,7 @@ node("cloudcasa-build") {
                         -e GOPATH=/workspace/.go \
                         -e GOMODCACHE=/workspace/.go/pkg/mod \
                         -e GOCACHE=/workspace/.go/cache \
-                        ${builderImage} \
+                        ${goBuilderImage} \
                         /bin/bash -lc 'set -eu; make local GOOS=linux GOARCH=amd64 VERSION=${imageTag}; make local GOOS=linux GOARCH=arm64 VERSION=${imageTag}'
 
                     docker buildx inspect multiarch >/dev/null 2>&1 || docker buildx create --name multiarch
