@@ -24,9 +24,8 @@ node("cloudcasa-build") {
 
     // Follow amds-veleroplugin style: <baseVersion>-<branch>.<buildNumber>
     def baseVersion = "1.10.0"
-    def branchMatch = (sourceBranch =~ /^v(\d+\.\d+\.\d+)\.x$/)
-    if (branchMatch) {
-        baseVersion = branchMatch[0][1]
+    if (sourceBranch ==~ /^v\d+\.\d+\.\d+\.x$/) {
+        baseVersion = sourceBranch.substring(1, sourceBranch.length() - 2)
     }
 
     def computedTag = "${baseVersion}-${sanitizedBranch}.${env.BUILD_NUMBER}"
