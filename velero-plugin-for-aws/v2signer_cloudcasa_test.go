@@ -167,3 +167,13 @@ func TestObjectStoreSendsPlainPartsWithoutChecksumAlgorithm(t *testing.T) {
 		})
 	}
 }
+
+// Every part of a multipart upload names its part number; Signature Version 2
+// signs it as a subresource, or the server refuses the part (403).
+func TestSignatureV2SignsThePartNumberOfAnUploadPart(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPut,
+		"https://minio.example:9000/bucket/backups/b1.tar.gz?x-id=UploadPart&uploadId=abc%2Bdef&partNumber=2", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "/bucket/backups/b1.tar.gz?partNumber=2&uploadId=abc+def",
+		(&SignatureV2Signer{}).canonicalizeResource(req))
+}

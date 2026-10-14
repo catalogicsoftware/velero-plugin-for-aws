@@ -130,7 +130,7 @@ func (s *SignatureV2Signer) canonicalizeResource(req *http.Request) string {
 	query := req.URL.Query()
 	if len(query) > 0 {
 		// List of standard AWS subresources (not including query parameters like list-type, max-keys, etc.)
-		subresources := []string{"acl", "lifecycle", "location", "logging", "notification",
+		subresources := []string{"acl", "lifecycle", "location", "logging", "notification", "partNumber",
 			"policy", "requestPayment", "torrent", "uploadId", "uploads", "versionId",
 			"versioning", "versions", "website", "delete", "cors", "restore", "tagging"}
 
