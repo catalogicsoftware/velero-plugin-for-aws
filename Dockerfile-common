@@ -1,0 +1,28 @@
+FROM registry.access.redhat.com/ubi9/ubi:latest
+
+ARG IMAGE_TAG
+ARG PLUGIN_PLATFORM
+
+LABEL name="CloudCasa Velero Plug-in for ${PLUGIN_PLATFORM}" \
+      maintainer="support@cloudcasa.io" \
+      vendor="Catalogic Software" \
+      version="${IMAGE_TAG}" \
+      release="${IMAGE_TAG}" \
+      summary="CloudCasa Velero Plug-in " \
+      description="Velero Plug-in container intended for use with CloudCasa."
+
+# Inject SHORT SHA
+ARG COMMIT
+ENV GIT_COMMIT_SHA=${COMMIT}
+
+ARG TARGETARCH
+
+RUN mkdir /plugins
+ADD _output/bin/linux/${TARGETARCH}/cp-plugin /bin/cp-plugin
+ADD _output/bin/linux/${TARGETARCH}/velero-plugin-for-aws /plugins/
+
+RUN groupadd -r nogroup && mkdir /licenses
+COPY LICENSE /licenses
+
+USER nobody:nogroup
+ENTRYPOINT ["/bin/cp-plugin", "/plugins/velero-plugin-for-aws", "/target/velero-plugin-for-aws"]

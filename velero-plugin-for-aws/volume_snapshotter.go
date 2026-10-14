@@ -22,7 +22,9 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/smithy-go"
@@ -48,10 +50,14 @@ const (
 // from snapshot.
 var iopsVolumeTypes = sets.NewString("io1", "io2")
 
+const credentialRefreshInterval = 10 * time.Minute
+
 type VolumeSnapshotter struct {
-	log         logrus.FieldLogger
-	ec2         *ec2.Client
-	ebsKmsKeyId string
+	log             logrus.FieldLogger
+	ec2             *ec2.Client
+	ebsKmsKeyId     string
+	config          map[string]string
+	lastRefreshTime time.Time
 }
 
 func newVolumeSnapshotter(logger logrus.FieldLogger) *VolumeSnapshotter {
@@ -78,11 +84,27 @@ func (b *VolumeSnapshotter) Init(config map[string]string) error {
 	if err != nil {
 		return errors.WithStack(err)
 	}
+
 	b.ec2 = ec2.NewFromConfig(cfg)
+	b.config = config
+	b.lastRefreshTime = time.Now()
+
+	return nil
+}
+
+func (b *VolumeSnapshotter) refreshCredentials() error {
+	if time.Since(b.lastRefreshTime) >= credentialRefreshInterval {
+		b.log.Infof("Refreshing AWS credentials since the last refresh was %v ago", time.Since(b.lastRefreshTime))
+		return b.Init(b.config)
+	}
 	return nil
 }
 
 func (b *VolumeSnapshotter) CreateVolumeFromSnapshot(snapshotID, volumeType, volumeAZ string, iops *int64) (volumeID string, err error) {
+	if err := b.refreshCredentials(); err != nil {
+		return "", errors.WithStack(err)
+	}
+
 	// describe the snapshot so we can apply its tags to the volume
 	descSnapInput := &ec2.DescribeSnapshotsInput{
 		SnapshotIds: []string{snapshotID},
@@ -155,6 +177,10 @@ func (b *VolumeSnapshotter) GetVolumeInfo(volumeID, volumeAZ string) (string, *i
 }
 
 func (b *VolumeSnapshotter) describeVolume(volumeID string) (types.Volume, error) {
+	if err := b.refreshCredentials(); err != nil {
+		return types.Volume{}, errors.WithStack(err)
+	}
+
 	input := &ec2.DescribeVolumesInput{
 		VolumeIds: []string{volumeID},
 	}
@@ -177,6 +203,10 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		return "", err
 	}
 
+	if err := b.refreshCredentials(); err != nil {
+		return "", errors.WithStack(err)
+	}
+
 	res, err := b.ec2.CreateSnapshot(context.Background(), &ec2.CreateSnapshotInput{
 		VolumeId: &volumeID,
 		TagSpecifications: []types.TagSpecification{
@@ -190,7 +220,87 @@ func (b *VolumeSnapshotter) CreateSnapshot(volumeID, volumeAZ string, tags map[s
 		return "", errors.WithStack(err)
 	}
 
-	return *res.SnapshotId, nil
+	snapshotID := *res.SnapshotId
+
+	// wait for the snapshot to be completed
+	var previousProgress string
+	t := 0
+
+	// flag for deleting the configmap used to report progress
+	// to the client in defer()
+	var deleteSnapshotProgressConfigMap bool
+
+	for {
+		if err := b.refreshCredentials(); err != nil {
+			return "", errors.WithStack(err)
+		}
+
+		// https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeSnapshots.html
+		snapRes, err := b.ec2.DescribeSnapshots(context.TODO(), &ec2.DescribeSnapshotsInput{
+			SnapshotIds: []string{aws.ToString(res.SnapshotId)},
+		})
+		if err != nil {
+			return "", errors.WithStack(err)
+		}
+
+		if count := len(snapRes.Snapshots); count != 1 {
+			return "", errors.Errorf("expected 1 snapshot from DescribeSnapshots for %s, got %v", snapshotID, count)
+		}
+
+		var snapshotState string
+		var snapshotStateMessage string
+		var snapshotProgressPercentage string
+		if snapRes != nil && snapRes.Snapshots[0].State != "" {
+			snapshotState = string(snapRes.Snapshots[0].State)
+		}
+		if snapRes != nil && snapRes.Snapshots[0].StateMessage != nil {
+			snapshotStateMessage = *snapRes.Snapshots[0].StateMessage
+		}
+		if snapRes != nil && snapRes.Snapshots[0].Progress != nil {
+			snapshotProgressPercentage = *snapRes.Snapshots[0].Progress
+		}
+
+		err = b.UpdateSnapshotProgress(volumeInfo, snapshotID, tags, snapshotProgressPercentage, snapshotState, snapshotStateMessage)
+		if err != nil {
+			b.log.Error(err, "<SNAPSHOT PROGRESS UPDATE> Failed to update snapshot progress. Continuing...")
+		}
+
+		if !deleteSnapshotProgressConfigMap {
+			defer b.DeleteSnapshotProgressConfigMap(tags)
+			deleteSnapshotProgressConfigMap = true
+		}
+
+		switch snapshotState {
+		case "error":
+			newErr := errors.Errorf("Snapshot AWS error: %s. Volume ID: %s", snapshotStateMessage, volumeID)
+			b.log.Error(err, "<SNAPSHOT PROGRESS UPDATE> Failed to update snapshot progress")
+			return "", newErr
+		case "completed":
+			b.log.Info("<SNAPSHOT PROGRESS UPDATE> Snapshot complete", "Volume ID", volumeID)
+			return snapshotID, nil
+		case "pending":
+			fallthrough
+		default:
+			if t == 3600 {
+				// set progress after 1 hour has passed
+				previousProgress = snapshotProgressPercentage
+			} else if t > 3600 && t%3600 == 0 {
+				if previousProgress == snapshotProgressPercentage {
+					newErr := errors.Errorf("EBS volume snapshot %s progress has been stuck on %s for 1 hour", snapshotID, previousProgress)
+					// TODO: At present, we are not setting the snapshotState as "failed". But, not sure if this is the right thing to do
+					err = b.UpdateSnapshotProgress(volumeInfo, snapshotID, tags, snapshotProgressPercentage, "error", newErr.Error())
+					if err != nil {
+						b.log.Error(err, "<SNAPSHOT PROGRESS UPDATE> Failed to update snapshot progress. Continuing...")
+					}
+					return "", newErr
+				}
+				previousProgress = snapshotProgressPercentage
+			}
+		}
+
+		t += 15
+		time.Sleep(15 * time.Second)
+	}
 }
 
 func getTagsForCluster(snapshotTags []types.Tag) []types.Tag {
@@ -243,6 +353,10 @@ func ec2Tag(key, val string) types.Tag {
 }
 
 func (b *VolumeSnapshotter) DeleteSnapshot(snapshotID string) error {
+	if err := b.refreshCredentials(); err != nil {
+		return errors.WithStack(err)
+	}
+
 	input := &ec2.DeleteSnapshotInput{
 		SnapshotId: &snapshotID,
 	}
