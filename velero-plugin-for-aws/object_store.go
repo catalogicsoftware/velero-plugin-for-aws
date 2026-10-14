@@ -113,6 +113,18 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		return err
 	}
 
+	o.log.Infof("Init: starting ObjectStore initialisation with "+
+		"region=%s, s3Url=%s, credentialsFile=%s, profile=%s, "+
+		"s3ForcePathStyle=%s, insecureSkipTLSVerify=%s, signatureVersion=%s",
+		config[regionKey],
+		config[s3URLKey],
+		config[credentialsFileKey],
+		config[credentialProfileKey],
+		config[s3ForcePathStyleKey],
+		config[insecureSkipTLSVerifyKey],
+		config[signatureVersionKey],
+	)
+
 	var (
 		region                      = config[regionKey]
 		s3URL                       = config[s3URLKey]
@@ -121,6 +133,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		customerKeyEncryptionFile   = config[customerKeyEncryptionFileKey]
 		customerKeyEncryptionSecret = config[customerKeyEncryptionSecretKey]
 		s3ForcePathStyleVal         = config[s3ForcePathStyleKey]
+		signatureVersionVal         = config[signatureVersionKey]
 		credentialProfile           = config[credentialProfileKey]
 		credentialsFile             = config[credentialsFileKey]
 		serverSideEncryption        = config[serverSideEncryptionKey]
@@ -133,6 +146,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		bucket                = config[bucketKey]
 		caCert                = config[caCertKey]
 		s3ForcePathStyle      bool
+		signatureVersion      string
 		insecureSkipTLSVerify bool
 		err                   error
 	)
@@ -143,9 +157,66 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		}
 	}
 
+	if signatureVersionVal == "" {
+		signatureVersion = "v4"
+	} else {
+		signatureVersion = signatureVersionVal
+	}
+
 	if insecureSkipTLSVerifyVal != "" {
 		if insecureSkipTLSVerify, err = strconv.ParseBool(insecureSkipTLSVerifyVal); err != nil {
 			return errors.Wrapf(err, "could not parse %s (expected bool)", insecureSkipTLSVerifyKey)
+		}
+	}
+
+	// Explicitly verify the credentials file before passing to configBuilder.
+	// This gives us a clear log entry if the file is missing or the profile
+	// is absent, independent of what the AWS SDK reports.
+	if credentialsFile != "" {
+		if fileInfo, err := os.Stat(credentialsFile); err != nil {
+			o.log.Errorf("Init: credentials file is not accessible at path: %s, "+
+				"error: %v. This will likely cause Init to fail.",
+				credentialsFile, err)
+		} else {
+			o.log.Infof("Init: credentials file accessible: %s, "+
+				"size=%d bytes, modTime=%v",
+				credentialsFile, fileInfo.Size(), fileInfo.ModTime())
+
+			if data, readErr := os.ReadFile(credentialsFile); readErr != nil {
+				o.log.Errorf("Init: could not read credentials file: %s, "+
+					"error: %v", credentialsFile, readErr)
+			} else {
+				var sections []string
+				for _, line := range strings.Split(string(data), "\n") {
+					line = strings.TrimSpace(line)
+					if strings.HasPrefix(line, "[") &&
+						strings.HasSuffix(line, "]") {
+						sections = append(sections, line)
+					}
+				}
+				o.log.Infof("Init: sections found in credentials file: %v",
+					sections)
+
+				// Explicitly check if the requested profile is present
+				profileFound := false
+				for _, section := range sections {
+					// Check both credentials format [profile-name]
+					// and config format [profile profile-name]
+					if section == "["+credentialProfile+"]" ||
+						section == "[profile "+credentialProfile+"]" {
+						profileFound = true
+						break
+					}
+				}
+				if profileFound {
+					o.log.Infof("Init: profile [%s] found in credentials file",
+						credentialProfile)
+				} else {
+					o.log.Errorf("Init: profile [%s] NOT found in credentials "+
+						"file sections %v. Init will likely fail.",
+						credentialProfile, sections)
+				}
+			}
 		}
 	}
 
@@ -154,15 +225,17 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		WithCredentialsFile(credentialsFile).
 		WithTLSSettings(insecureSkipTLSVerify, caCert).Build()
 	if err != nil {
+		o.log.Errorf("Init: newConfigBuilder.Build() failed: %v", err)
 		return errors.WithStack(err)
 	}
+	o.log.Info("Init: newConfigBuilder.Build() succeeded, S3 client initialisation starting")
 
 	// AWS (not an alternate S3-compatible API) and region not
 	// explicitly specified: determine the bucket's region
 	// GetBucketRegion will attempt to get the region for a bucket using the
 	// client's configured region to determine which AWS partition to perform the query on.
 	if s3URL == "" && region == "" {
-		regionClient, err := newS3Client(cfg, s3URL, s3ForcePathStyle)
+		regionClient, err := newS3Client(cfg, s3URL, s3ForcePathStyle, signatureVersion)
 		if err != nil {
 			return errors.WithStack(err)
 		}
@@ -177,7 +250,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 		cfg.Region = region
 	}
 
-	client, err := newS3Client(cfg, s3URL, s3ForcePathStyle)
+	client, err := newS3Client(cfg, s3URL, s3ForcePathStyle, signatureVersion)
 	if err != nil {
 		return errors.WithStack(err)
 	}
@@ -186,6 +259,8 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	o.kmsKeyID = kmsKeyID
 	o.serverSideEncryption = serverSideEncryption
 	o.tagging = tagging
+
+	o.log.Info("Init: S3 client created successfully, ObjectStore Init complete")
 
 	// Validate that only one SSE method is used
 	sseMethodsCount := 0
@@ -225,7 +300,7 @@ func (o *ObjectStore) Init(config map[string]string) error {
 	}
 
 	if publicURL != "" {
-		publicClient, err := newS3Client(cfg, publicURL, s3ForcePathStyle)
+		publicClient, err := newS3Client(cfg, publicURL, s3ForcePathStyle, signatureVersion)
 		if err != nil {
 			return err
 		}

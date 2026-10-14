@@ -49,3 +49,5 @@ go build \
     -o ${OUTPUT} \
     -installsuffix "static" \
     ${PKG}/${BIN}
+
+CGO_ENABLED=0 go build -v -o ${OUTPUT_DIR}/cp-plugin ./hack/cp-plugin

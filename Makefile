@@ -19,7 +19,7 @@ BIN ?= velero-plugin-for-aws
 PKG := github.com/vmware-tanzu/velero-plugin-for-aws
 
 # Where to push the docker image.
-REGISTRY ?= velero
+REGISTRY ?= catalogicsoftware
 
 # Image name
 IMAGE ?= $(REGISTRY)/$(BIN)
@@ -34,7 +34,7 @@ VELERO_DOCKERFILE ?= Dockerfile
 local : ARCH ?= $(shell go env GOOS)-$(shell go env GOARCH)
 ARCH ?= linux-amd64
 
-VERSION ?= main
+VERSION ?= v1.14.4.1
 
 TAG_LATEST ?= false
 
@@ -94,6 +94,12 @@ test:
 
 # ci is a convenience target for CI builds.
 ci: verify-modules test
+
+# docker-build builds and pushes CloudCasa's multiarch image from the binaries in _output.
+docker-build:
+	docker buildx create --name multiarch
+	docker buildx use multiarch
+	docker buildx build -t $(IMAGE):$(VERSION) --platform=linux/arm64,linux/amd64 -f Dockerfile-common . --push
 
 container:
 ifneq ($(BUILDX_ENABLED), true)
