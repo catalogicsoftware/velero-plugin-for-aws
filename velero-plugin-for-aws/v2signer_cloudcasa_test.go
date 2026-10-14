@@ -37,6 +37,12 @@ func (f *fakeS3) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Unlock()
 
 	switch {
+	case r.Method == http.MethodPost && r.URL.Query().Has("uploads"):
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<InitiateMultipartUploadResult><Bucket>bucket</Bucket><Key>k</Key><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>`)
+	case r.Method == http.MethodPost && r.URL.Query().Has("uploadId"):
+		_, _ = io.WriteString(w, `<?xml version="1.0" encoding="UTF-8"?>
+<CompleteMultipartUploadResult><Bucket>bucket</Bucket><Key>k</Key><ETag>"etag"</ETag></CompleteMultipartUploadResult>`)
 	case r.Method == http.MethodPut:
 		f.mu.Lock()
 		f.objects[r.URL.Path] = string(body)
@@ -116,4 +122,48 @@ func TestObjectStoreSignsRequestsWithSignatureV2(t *testing.T) {
 	assert.Equal(t, http.MethodPut, put.method)
 	assert.Equal(t, "backup contents", put.body)
 	assert.NotContains(t, put.header.Get("Content-Encoding"), "aws-chunked")
+}
+
+// Backups larger than one part are uploaded in parts. A store that is not AWS
+// gets no trailing checksums on them: many S3-compatible servers reject
+// aws-chunked bodies, and Signature Version 2 drops the trailer headers.
+func TestObjectStoreSendsPlainPartsWithoutChecksumAlgorithm(t *testing.T) {
+	for _, signatureVersion := range []string{"v4", "v2"} {
+		t.Run(signatureVersion, func(t *testing.T) {
+			fake := &fakeS3{objects: map[string]string{}}
+			server := httptest.NewTLSServer(fake)
+			defer server.Close()
+
+			credsFile := filepath.Join(t.TempDir(), "cloud")
+			require.NoError(t, os.WriteFile(credsFile,
+				[]byte("[default]\naws_access_key_id=AKIDCLOUDCASA\naws_secret_access_key=secret\n"), 0600))
+
+			store := newObjectStore(logrus.New())
+			require.NoError(t, store.Init(map[string]string{
+				regionKey:                "us-east-1",
+				s3URLKey:                 server.URL,
+				s3ForcePathStyleKey:      "true",
+				signatureVersionKey:      signatureVersion,
+				credentialsFileKey:       credsFile,
+				insecureSkipTLSVerifyKey: "true",
+				bucketKey:                "bucket",
+				checksumAlgKey:           "",
+			}))
+
+			body := strings.Repeat("x", 6*1024*1024)
+			require.NoError(t, store.PutObject("bucket", "backups/b1/b1.tar.gz", io.MultiReader(strings.NewReader(body))))
+
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			var partBytes int
+			for _, r := range fake.requests {
+				assert.NotContains(t, r.header.Get("Content-Encoding"), "aws-chunked", "%s %s", r.method, r.path)
+				assert.Empty(t, r.header.Get("X-Amz-Trailer"), "%s %s", r.method, r.path)
+				if r.method == http.MethodPut {
+					partBytes += len(r.body)
+				}
+			}
+			assert.Equal(t, len(body), partBytes)
+		})
+	}
 }
