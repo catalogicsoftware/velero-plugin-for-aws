@@ -43,7 +43,7 @@ node("cloudcasa-build") {
         baseVersion = sourceBranch.substring(1, sourceBranch.length() - 2)
     }
 
-    def computedTag = "${baseVersion}-${sanitizedBranch}.${env.BUILD_NUMBER}"
+    def computedTag = "${baseVersion}.${env.BUILD_NUMBER}"
     def imageTag = (params.IMAGE_TAG_OVERRIDE ?: "").trim() ? (params.IMAGE_TAG_OVERRIDE ?: "").trim() : computedTag
 
     def allowedBranches = ["v1.14.0.x-test"]
