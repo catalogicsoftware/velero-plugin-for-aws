@@ -46,7 +46,7 @@ node("cloudcasa-build") {
     def computedTag = "${baseVersion}-${sanitizedBranch}.${env.BUILD_NUMBER}"
     def imageTag = (params.IMAGE_TAG_OVERRIDE ?: "").trim() ? (params.IMAGE_TAG_OVERRIDE ?: "").trim() : computedTag
 
-    def allowedBranches = ["v1.14.0.x"]
+    def allowedBranches = ["v1.14.0.x-test"]
     def shouldBuild = (params.BUILD_AWS_PLUGIN ?: false) && allowedBranches.contains(sourceBranch)
 
     // Internal registry
